@@ -72,7 +72,7 @@ public class Main {
 
     private static void printHelp(Options options) {
         HelpFormatter formatter = new HelpFormatter();
-        formatter.printHelp("findcardname", options, true);
+        formatter.printHelp("cardprefixlist", options, true);
     }
 
     private static Options createOptions() {

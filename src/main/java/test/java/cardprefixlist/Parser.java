@@ -44,7 +44,7 @@ public class Parser {
         }
         int from = parsePrefix(parts[0]);
         int to = parsePrefix(parts[1]);
-        String name = parts[2];
+        String name = parts[2].trim();
         consumer.accept(from, to, name);
     }
 

@@ -12,7 +12,14 @@ public class Range {
     private int prefixTo;
     private String name;
 
+    public Range() {
+    }
+
     public Range(int prefixFrom, int prefixTo, String name) {
+        init(prefixFrom, prefixTo, name);
+    }
+
+    public void init(int prefixFrom, int prefixTo, String name) {
         this.prefixFrom = prefixFrom;
         this.prefixTo = prefixTo;
         this.name = name;

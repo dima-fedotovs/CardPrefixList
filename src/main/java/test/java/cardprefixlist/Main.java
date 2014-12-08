@@ -1,14 +1,6 @@
 package test.java.cardprefixlist;
 
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.HelpFormatter;
-import org.apache.commons.cli.Option;
-import org.apache.commons.cli.OptionBuilder;
-import org.apache.commons.cli.OptionGroup;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.ParseException;
-import org.apache.commons.cli.PosixParser;
+import org.apache.commons.cli.*;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -36,6 +28,7 @@ public class Main {
         try {
             CommandLine cmd = parser.parse(options, args);
             verbose = cmd.hasOption(OPT_VERBOSE_OUTPUT);
+
             if (cmd.hasOption(OPT_HELP)) {
                 printHelp(options);
             } else {
@@ -53,7 +46,7 @@ public class Main {
                 if (!quiet) {
                     processor.setConfigErrorReporter((lineNo, msg) -> System.err.printf("Error in line %d: %s\n", lineNo, msg));
                 }
-                if (!verbose) {
+                if (verbose) {
                     processor.setProfiler((msg, nano) -> System.out.printf("%s took %.2f ms\n", msg, nano / 1000000.0));
                 }
                 boolean hasErrors = processor.prepare();
@@ -123,11 +116,11 @@ public class Main {
 
         Option cardnum = OptionBuilder
                 .withDescription("find cards by the number. If not specified, card numbers are asked interactively.")
-                .withArgName("card,card...")
+                .withArgName("card card ...")
                 .hasArgs(1)
                 .hasOptionalArgs()
                 .withLongOpt("card")
-                .withValueSeparator(',')
+                .withValueSeparator()
                 .create(OPT_CARD_NUMBER);
         options.addOption(cardnum);
 

@@ -1,6 +1,14 @@
 package test.java.cardprefixlist;
 
-import org.apache.commons.cli.*;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.OptionBuilder;
+import org.apache.commons.cli.OptionGroup;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
+import org.apache.commons.cli.PosixParser;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -20,13 +28,6 @@ public class Main {
     public static final char OPT_CARD_NUMBER = 'n';
     public static final char OPT_HELP = 'h';
     public static final char OPT_QUIET = 'q';
-    private final CardList cardList = new CardList();
-    private final Parser parser = new Parser();
-    private boolean verbose;
-    private boolean ignoreParsingErrors;
-    private boolean quiet;
-    private String configFile;
-    private Supplier<String> cardNumbersSupplier;
 
     public static void main(String[] args) {
         Options options = createOptions();
@@ -38,20 +39,30 @@ public class Main {
             if (cmd.hasOption(OPT_HELP)) {
                 printHelp(options);
             } else {
-                Main main = new Main();
-                main.verbose = verbose;
-                main.ignoreParsingErrors = cmd.hasOption(OPT_IGNORE_PARSING_ERRORS);
-                main.quiet = cmd.hasOption(OPT_QUIET);
-                main.configFile = cmd.getOptionValue(OPT_CONFIG_FILE);
+                boolean ignoreParsingErrors = cmd.hasOption(OPT_IGNORE_PARSING_ERRORS);
+                boolean quiet = cmd.hasOption(OPT_QUIET);
+                String configFile = cmd.getOptionValue(OPT_CONFIG_FILE);
                 String[] cardNumbers = cmd.getOptionValues(OPT_CARD_NUMBER);
 
-                main.cardNumbersSupplier = new Supplier<String>() {
-                    @Override
-                    public String get() {
-                        return null;
-                    }
+                Supplier<String> cardNumbersSupplier = cardNumbers == null ?
+                        new InteractiveCardNumberSupplier() :
+                        new ListCardNumberSupplier(cardNumbers);
+                Processor processor = new Processor(configFile, cardNumbersSupplier);
+                processor.setCardNameReporter((cardNr, name) -> System.out.printf("%s: %s\n", cardNr, name));
+                processor.setCardErrorReporter((cardNr, msg) -> System.err.printf("Error: %s: %s\n", cardNr, msg));
+                if (!quiet) {
+                    processor.setConfigErrorReporter((lineNo, msg) -> System.err.printf("Error in line %d: %s\n", lineNo, msg));
                 }
-                main.processCards();
+                if (!verbose) {
+                    processor.setProfiler((msg, nano) -> System.out.printf("%s took %.2f ms\n", msg, nano / 1000000.0));
+                }
+                boolean hasErrors = processor.prepare();
+                if (hasErrors && !ignoreParsingErrors) {
+                    System.out.println("Errors found while parsing config. To ignore use --ignore-errors. See --help for all options.");
+                    System.exit(1);
+                    return;
+                }
+                processor.process();
             }
         } catch (ParseException e) {
             System.err.println(e.getMessage());
@@ -123,86 +134,46 @@ public class Main {
         return options;
     }
 
-    private void processCards() throws ParseException, IOException {
-        // parsing config file
-        long t1 = System.nanoTime();
-        boolean hasErrors = parser.parseFile(configFile, cardList::add, this::printConfigError);
-        long t2 = System.nanoTime();
-        profileMsg("Parsing", t1, t2);
+    private static class InteractiveCardNumberSupplier implements Supplier<String> {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
 
-        if (hasErrors && !ignoreParsingErrors) {
-            System.out.println("Errors found while parsing config. To ignore use --ignore-errors. See --help for all options.");
-            return;
-        }
-
-        // parsing and checking card numbers
-        if (cardNumbers == null) {
-            processCardsInteractive();
-        } else {
-            processCardsFromCmd();
-        }
-    }
-
-    private void processCardsInteractive() throws IOException {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in))) {
-            parser.processCardsPans(() -> terminalSupplier(reader),
-                    this::findCard,
-                    this::printCardError);
-        }
-    }
-
-    private void processCardsFromCmd() {
-        Iterator<String> cards = Arrays.asList(cardNumbers).iterator();
-        parser.processCardsPans(() -> commandLineSupplier(cards),
-                this::findCard,
-                this::printCardError);
-    }
-
-    private void findCard(String cardNr, Integer pan) {
-        long t1 = System.nanoTime();
-        String name = cardList.find(pan);
-        long t2 = System.nanoTime();
-        if (name == null) {
-            printCardError(cardNr, "Not found");
-        } else {
-            System.out.printf("%s: %s\n", cardNr, name);
-        }
-        profileMsg("Searching", t1, t2);
-    }
-
-    private String commandLineSupplier(Iterator<String> cards) {
-        if (!cards.hasNext()) {
-            return null;
-        }
-        return cards.next();
-    }
-
-    private String terminalSupplier(BufferedReader reader) {
-        System.out.print("Enter card number: ");
-        try {
-            String line = reader.readLine();
-            if (line != null && line.trim().isEmpty()) {
-                line = null;
+        @Override
+        public String get() {
+            String cardNumber = promptCardNumber();
+            if (cardNumber == null) {
+                return null;
             }
-            return line;
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
+            cardNumber = cardNumber.trim();
+            if (cardNumber.isEmpty()) {
+                return null;
+            }
+            return cardNumber.trim();
+        }
+
+        public String promptCardNumber() {
+            System.out.print("Enter card number: ");
+            try {
+                return reader.readLine();
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
         }
     }
 
-    private void printConfigError(Integer lineNo, String msg) {
-        if (!quiet) {
-            System.err.printf("Error in line %d: %s\n", lineNo, msg);
+    private static class ListCardNumberSupplier implements Supplier<String> {
+        private Iterator<String> numbersIterator;
+
+        public ListCardNumberSupplier(String[] cardNumbers) {
+            numbersIterator = Arrays.asList(cardNumbers).iterator();
         }
-    }
 
-    private void printCardError(String cardNr, String msg) {
-        System.err.printf("Error: %s: %s\n", cardNr, msg);
-    }
-
-    private void profileMsg(String msg, long t1, long t2) {
-        if (verbose) {
-            System.out.printf("%s took %.2f ms\n", msg, (t2 - t1) / 1000000.0);
+        @Override
+        public String get() {
+            if (numbersIterator.hasNext()) {
+                return numbersIterator.next().trim();
+            } else {
+                return null;
+            }
         }
     }
 }
